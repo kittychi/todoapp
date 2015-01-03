@@ -26,6 +26,8 @@
     this.router = new Router();
     this.router.init();
 
+    this.$todoList.addEventListener('click', this._doShowUrl);
+
     window.addEventListener('load', function () {
       this._updateFilterState();
     }.bind(this));
@@ -50,7 +52,7 @@
    */
   Controller.prototype.showAll = function () {
     this.model.read(function (data) {
-      this.$todoList.innerHTML = this.view.show(data);
+      this.$todoList.innerHTML = this._parseForURLs(this.view.show(data));
     }.bind(this));
   };
 
@@ -59,7 +61,7 @@
    */
   Controller.prototype.showActive = function () {
     this.model.read({ completed: 0 }, function (data) {
-      this.$todoList.innerHTML = this.view.show(data);
+      this.$todoList.innerHTML = this._parseForURLs(this.view.show(data));
     }.bind(this));
   };
 
@@ -68,7 +70,7 @@
    */
   Controller.prototype.showCompleted = function () {
     this.model.read({ completed: 1 }, function (data) {
-      this.$todoList.innerHTML = this.view.show(data);
+      this.$todoList.innerHTML = this._parseForURLs(this.view.show(data));
     }.bind(this));
   };
 
@@ -120,7 +122,7 @@
 
         // Instead of re-rendering the whole view just update
         // this piece of it
-        label.innerHTML = value;
+        label.innerHTML = this._parseForURLs(value);
       } else if (value.length === 0) {
         // No value was entered in the input. We'll remove the todo item.
         this.removeItem(id);
@@ -140,10 +142,10 @@
     var input = document.createElement('input');
     input.className = 'edit';
 
-    // Get the innerHTML of the label instead of requesting the data from the
+    // Get the innerText of the label instead of requesting the data from the
     // ORM. If this were a real DB this would save a lot of time and would avoid
     // a spinner gif.
-    input.value = label.innerHTML;
+    input.value = label.innerText;
 
     li.appendChild(input);
 
@@ -175,10 +177,12 @@
    */
   Controller.prototype.removeItem = function (id) {
     this.model.remove(id, function () {
-      this.$todoList.removeChild($$('[data-id="' + id + '"]'));
+      var ids = [].concat(id);
+      ids.forEach( function(id) {
+        this.$todoList.removeChild($$('[data-id="' + id + '"]'));
+      }.bind(this));
+      this._filter();
     }.bind(this));
-
-    this._filter();
   };
 
   /**
@@ -186,9 +190,11 @@
    */
   Controller.prototype.removeCompletedItems = function () {
     this.model.read({ completed: 1 }, function (data) {
+      var ids = [];
       data.forEach(function (item) {
-        this.removeItem(item.id);
+        ids.push(item.id);
       }.bind(this));
+      this.removeItem(ids);
     }.bind(this));
 
     this._filter();
@@ -203,25 +209,32 @@
    *                          or not
    * @param {boolean|undefined} silent Prevent re-filtering the todo items
    */
-  Controller.prototype.toggleComplete = function (id, checkbox, silent) {
+  Controller.prototype.toggleComplete = function (ids, checkbox, silent) {
     var completed = checkbox.checked ? 1 : 0;
 
-    this.model.update(id, { completed: completed }, function () {
-      var listItem = $$('[data-id="' + id + '"]');
-
-      if (!listItem) {
-        return;
+    this.model.update(ids, { completed: completed }, function () {
+      if ( ids.constructor != Array ) {
+        ids = [ ids ];
       }
 
-      listItem.className = completed ? 'completed' : '';
+      ids.forEach( function(id) {
+        var listItem = $$('[data-id="' + id + '"]');
 
-      // In case it was toggled from an event and not by clicking the checkbox
-      listItem.querySelector('input').checked = completed;
-    });
+        if (!listItem) {
+          return;
+        }
 
-    if (!silent) {
-      this._filter();
-    }
+        listItem.className = completed ? 'completed' : '';
+
+        // In case it was toggled from an event and not by clicking the checkbox
+        listItem.querySelector('input').checked = completed;
+      });
+
+      if (!silent) {
+        this._filter();
+      }
+
+    }.bind(this));
   };
 
   /**
@@ -239,12 +252,13 @@
     }
 
     this.model.read({ completed: query }, function (data) {
+      var ids = [];
       data.forEach(function (item) {
-        this.toggleComplete(item.id, e.target, true);
+        ids.push(item.id);
       }.bind(this));
+      this.toggleComplete(ids, e.target, false);
     }.bind(this));
 
-    this._filter();
   };
 
   /**
@@ -252,16 +266,17 @@
    * number of todos.
    */
   Controller.prototype._updateCount = function () {
-    var todos = this.model.getCount();
+    this.model.getCount(function(todos) {
+      this.$todoItemCounter.innerHTML = this.view.itemCounter(todos.active);
 
-    this.$todoItemCounter.innerHTML = this.view.itemCounter(todos.active);
+      this.$clearCompleted.innerHTML = this.view.clearCompletedButton(todos.completed);
+      this.$clearCompleted.style.display = todos.completed > 0 ? 'block' : 'none';
 
-    this.$clearCompleted.innerHTML = this.view.clearCompletedButton(todos.completed);
-    this.$clearCompleted.style.display = todos.completed > 0 ? 'block' : 'none';
+      this.$toggleAll.checked = todos.completed === todos.total;
 
-    this.$toggleAll.checked = todos.completed === todos.total;
+      this._toggleFrame(todos);
+    }.bind(this));
 
-    this._toggleFrame(todos);
   };
 
   /**
@@ -335,6 +350,36 @@
     */
   Controller.prototype._getCurrentPage = function () {
     return document.location.hash.split('/')[1];
+  };
+
+  Controller.prototype._parseForURLs = function (text) {
+    var re = /(https?:\/\/[^\s"<>,]+)/g;
+    // return text.replace(re, '<a href="$1" data-src="$1" target="_blank">$1</a>');
+    return text.replace(re, '<a href="$1" data-src="$1">$1</a>');
+  };
+
+  Controller.prototype._doShowUrl = function(e) {
+    // only applies to elements with data-src attributes
+    if (!e.target.hasAttribute('data-src')) {
+      return;
+    }
+    e.preventDefault();
+    var url = e.target.getAttribute('data-src');
+    chrome.app.window.create(
+     'webview.html',
+     {hidden: true},   // only show window when webview is configured
+     function(appWin) {
+       appWin.contentWindow.addEventListener('DOMContentLoaded',
+         function(e) {
+           // when window is loaded, set webview source
+           var webview = appWin.contentWindow.
+                document.querySelector('webview');
+           webview.src = url;
+           // now we can show it:
+           appWin.show();
+         }
+       );
+     });
   };
 
   // Export to window

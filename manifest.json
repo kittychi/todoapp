@@ -6,7 +6,10 @@
 	"version": "1.0", 
 	
 	"permissions": [
-		"storage"
+		"storage", 
+		"alarms", 
+		"notifications", 
+		"webview"
 	],
 	"app": {
 		"background": {
