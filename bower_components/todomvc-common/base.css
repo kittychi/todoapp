@@ -409,6 +409,11 @@ label[for='toggle-all'] {
 	}
 }
 
+.thumbnail img[data-src] {
+	max-width: 100px; 
+	max-height: 28px;
+}
+
 .hidden{
 	display:none;
 }
